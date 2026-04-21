@@ -17,18 +17,22 @@
   "bugs": {
     "url": "https://github.com/clawmem-ai/clawmem-mcp-server/issues"
   },
+  "license": "MIT",
+  "author": "ClawMem",
   "bin": {
-    "clawmem-mcp-server": "./mcp/server.js"
+    "clawmem-mcp-server": "mcp/server.js"
   },
   "main": "./mcp/server.js",
   "files": [
     "mcp/",
     "lib/",
+    "LICENSE",
     "README.md"
   ],
   "scripts": {
     "test": "node --test test/*.test.js",
-    "start": "node ./mcp/server.js"
+    "start": "node ./mcp/server.js",
+    "prepublishOnly": "npm test"
   },
   "engines": {
     "node": ">=18"
