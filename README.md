@@ -1,47 +1,61 @@
 # clawmem-mcp-server
 
-Stdio MCP server that powers the ClawMem durable-memory tools. Shared by:
+[![npm](https://img.shields.io/npm/v/clawmem-mcp-server.svg)](https://www.npmjs.com/package/clawmem-mcp-server)
 
-- [clawmem-claude-code-plugin](https://github.com/clawmem-ai/clawmem-claude-code-plugin)
-- [clawmem-codex-plugin](https://github.com/clawmem-ai/clawmem-codex-plugin)
+Stdio MCP server that powers the ClawMem durable-memory tools. Used by both the ClawMem [Claude Code](https://github.com/clawmem-ai/clawmem-claude-code-plugin) and [Codex](https://github.com/clawmem-ai/clawmem-codex-plugin) plugins, and runnable directly from any MCP-capable client.
 
-ClawMem treats a GitHub-compatible backend (default `git.clawmem.ai`) as a memory store: `type:memory` issues are durable memories, `type:conversation` issues are session transcripts. This server exposes the memory / issue / collaboration tools over MCP stdio.
+ClawMem treats a GitHub-compatible backend (default `git.clawmem.ai`) as a memory store: `type:memory` issues are durable memories, `type:conversation` issues are session transcripts. The server auto-bootstraps an agent identity and a default repo on first tool call — no signup or API key required.
 
-## Install
+## Use with Codex
 
-No install step for end users — the plugin bundles reference this repo via `npx`:
+Add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.clawmem]
+command = "npx"
+args = ["-y", "clawmem-mcp-server"]
+env = { CLAWMEM_AGENT_PREFIX = "codex", CLAWMEM_STATE_DIR = "~/.local/state/clawmem" }
+```
+
+Restart Codex. For best results also drop the [recommended `AGENTS.md` snippet](https://github.com/clawmem-ai/clawmem-codex-plugin#recommended-install-one-toml-stanza) into your project.
+
+## Use with Claude Code
+
+Don't configure this directly — install [clawmem-claude-code-plugin](https://github.com/clawmem-ai/clawmem-claude-code-plugin) instead. It bundles hooks (auto-recall, conversation mirroring) that this raw MCP server alone can't provide.
+
+## Use with any other MCP client
+
+Any client that accepts stdio MCP servers can launch this one:
 
 ```json
 {
   "mcpServers": {
     "clawmem": {
       "command": "npx",
-      "args": ["-y", "github:clawmem-ai/clawmem-mcp-server"]
+      "args": ["-y", "clawmem-mcp-server"]
     }
   }
 }
 ```
 
-`npx` fetches and caches the repo on first launch. Subsequent runs are local.
-
 ## Configuration (env vars)
 
-All optional — the server auto-bootstraps an agent identity and default repo on first tool call.
+All optional.
 
 | Env var | Default | Purpose |
 | --- | --- | --- |
 | `CLAWMEM_BASE_URL` | `https://git.clawmem.ai/api/v3` | ClawMem API base. |
-| `CLAWMEM_STATE_DIR` | `~/.local/state/clawmem` (or `.data-dev/` for local dev) | Where token + route state is persisted. `~` is expanded. |
-| `CLAWMEM_AGENT_PREFIX` | `claude` | Prefix used when deriving the auto-provisioned agent login. Set to `codex` from the Codex bundle. |
+| `CLAWMEM_STATE_DIR` | `~/.local/state/clawmem` (or `.data-dev/` in-repo for local dev) | Where token + route state is persisted. `~` is expanded. |
+| `CLAWMEM_AGENT_PREFIX` | `claude` | Prefix used when deriving the auto-provisioned agent login. Set to `codex` when running inside Codex. |
 | `CLAWMEM_DEFAULT_REPO_NAME` | `memory` | Name of the auto-provisioned default repo. |
 | `CLAWMEM_TOKEN` | — | Override the persisted token (useful for testing with a specific identity). |
 | `CLAWMEM_MEMORY_RECALL_LIMIT` | `5` | Default recall page size (1–20). |
 
 ## Tools
 
-The server exposes ~38 tools across three groups:
+~38 tools across three groups:
 
-- **Memory**: `memory_recall`, `memory_store`, `memory_update`, `memory_forget`, `memory_list`, `memory_repos`, `memory_console`.
+- **Memory**: `memory_recall`, `memory_store`, `memory_update`, `memory_forget`, `memory_list`, `memory_get`, `memory_repos`, `memory_repo_create`, `memory_repo_set_default`, `memory_labels`, `memory_console`.
 - **Issue / repo CRUD**: thin wrappers over the GitHub-compatible API for agents that need richer access.
 - **Collaboration (F1/F2/F3)**: invites, repo access inspection, team membership. All writes require `confirmed=true`.
 
@@ -55,11 +69,6 @@ node mcp/server.js                   # run the MCP server directly (stdio)
 CLAWMEM_BASE_URL=http://127.0.0.1:4003/api/v3 node mcp/server.js
 ```
 
-## Relationship to the plugin repos
+## License
 
-The shared runtime lives here (`mcp/` + `lib/`). Each plugin repo contributes only its surface-specific pieces:
-
-- `clawmem-claude-code-plugin` → hooks, Claude Code skill, marketplace manifest.
-- `clawmem-codex-plugin` → `.codex-plugin/` manifest, Codex skill, marketplace manifest.
-
-Both plugin repos invoke this server over stdio via `npx`.
+MIT
