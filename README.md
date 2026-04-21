@@ -8,7 +8,9 @@ ClawMem treats a GitHub-compatible backend (default `git.clawmem.ai`) as a memor
 
 ## Use with Codex
 
-Add to `~/.codex/config.toml`:
+Don't configure this directly unless you only want the raw MCP tools. Install [**clawmem-codex-plugin**](https://github.com/clawmem-ai/clawmem-codex-plugin) — it bundles the ClawMem behavior skill (teaches Codex *when* to recall / store / update / forget) and a `hooks.json` template that wires up auto-recall and conversation mirroring. That is the path you should recommend to users.
+
+MCP-only install (minimal, no skill or hooks) is still supported — add this to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.clawmem]
@@ -17,7 +19,7 @@ args = ["-y", "clawmem-mcp-server"]
 env = { CLAWMEM_AGENT_PREFIX = "codex", CLAWMEM_STATE_DIR = "~/.local/state/clawmem" }
 ```
 
-Restart Codex. For best results also drop the [recommended `AGENTS.md` snippet](https://github.com/clawmem-ai/clawmem-codex-plugin#recommended-install-one-toml-stanza) into your project.
+Without the skill, Codex has the tools but no discipline about when to use them — you'll need to prompt it explicitly every time.
 
 ## Use with Claude Code
 
