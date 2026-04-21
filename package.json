@@ -1,0 +1,36 @@
+{
+  "name": "clawmem-mcp-server",
+  "version": "0.1.0",
+  "description": "Stdio MCP server for ClawMem durable memory. Shared by the ClawMem Claude Code and Codex plugins.",
+  "keywords": [
+    "mcp",
+    "clawmem",
+    "memory",
+    "claude",
+    "codex"
+  ],
+  "homepage": "https://github.com/clawmem-ai/clawmem-mcp-server",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clawmem-ai/clawmem-mcp-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/clawmem-ai/clawmem-mcp-server/issues"
+  },
+  "bin": {
+    "clawmem-mcp-server": "./mcp/server.js"
+  },
+  "main": "./mcp/server.js",
+  "files": [
+    "mcp/",
+    "lib/",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "node ./mcp/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
