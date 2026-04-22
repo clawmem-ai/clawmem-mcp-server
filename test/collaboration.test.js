@@ -40,6 +40,19 @@ test("repoSummaryFullName prefers full_name, falls back to owner/name", () => {
   assert.equal(collab.repoSummaryFullName(undefined), undefined);
 });
 
+test("renderOrgLine composes login, name, permission, and description", () => {
+  assert.equal(
+    collab.renderOrgLine({ login: "acme", name: "Acme Inc", default_repository_permission: "pull", description: "widgets" }),
+    "acme (Acme Inc) [default:read] - widgets"
+  );
+  assert.equal(collab.renderOrgLine({ login: "solo" }), "solo");
+  assert.equal(
+    collab.renderOrgLine({ login: "beta", default_repository_permission: "weird" }),
+    "beta [default:weird]"
+  );
+  assert.equal(collab.renderOrgLine(undefined), "unknown-org");
+});
+
 test("listRepoAccessTeams collects teams that see the repo", async () => {
   const client = {
     async listOrgTeams() {
