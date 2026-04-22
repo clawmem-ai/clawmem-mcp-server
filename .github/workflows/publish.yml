@@ -16,8 +16,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Upgrade npm for OIDC trusted publisher
+        run: npm install -g npm@latest
 
       - name: Verify tag matches package.json version
         run: |
@@ -31,5 +34,3 @@ jobs:
       - run: npm test
 
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
