@@ -495,7 +495,7 @@ const TOOL_DEFS = [
   },
   {
     name: "collaboration_admin_invoke",
-    description: "Rarely-used admin collaboration operations collapsed into one meta tool to keep the default tool list lean. Dispatches by action name. Write actions require confirmed=true. Supported actions: team_create, team_update, team_delete, org_invitations_list, org_invitation_revoke, org_members_list, org_member_remove, org_membership_remove, org_outside_collaborators_list, repo_transfer, repo_rename.",
+    description: "Rarely-used admin collaboration operations collapsed into one meta tool to keep the default tool list lean. Dispatches by action name. Write actions require confirmed=true. Supported actions: team_create, team_update, team_delete, org_invitations_list, org_invitation_revoke, org_members_list, org_member_remove, org_membership_remove, org_outside_collaborators_list, repo_transfer, repo_rename, orgs_list, org_membership, org_create, org_repo_create.",
     inputSchema: {
       type: "object",
       properties: {
@@ -512,12 +512,16 @@ const TOOL_DEFS = [
             "org_membership_remove",
             "org_outside_collaborators_list",
             "repo_transfer",
-            "repo_rename"
+            "repo_rename",
+            "orgs_list",
+            "org_membership",
+            "org_create",
+            "org_repo_create"
           ]
         },
         params: {
           type: "object",
-          description: "Action-specific parameters. See action docs: team_create {org,name,description?,privacy?}; team_update {org,teamSlug,name?,description?,privacy?}; team_delete {org,teamSlug}; org_invitations_list {org}; org_invitation_revoke {org,invitationId}; org_members_list {org,role?}; org_member_remove {org,username}; org_membership_remove {org,username}; org_outside_collaborators_list {org}; repo_transfer {repo,newOwner,newRepoName?}; repo_rename {repo,newName}.",
+          description: "Action-specific parameters. See action docs: team_create {org,name,description?,privacy?}; team_update {org,teamSlug,name?,description?,privacy?}; team_delete {org,teamSlug}; org_invitations_list {org}; org_invitation_revoke {org,invitationId}; org_members_list {org,role?}; org_member_remove {org,username}; org_membership_remove {org,username}; org_outside_collaborators_list {org}; repo_transfer {repo,newOwner,newRepoName?}; repo_rename {repo,newName}; orgs_list {}; org_membership {org,username}; org_create {login,name?,defaultPermission?}; org_repo_create {org,name,description?,private?,autoInit?,hasIssues?,hasWiki?}.",
           additionalProperties: true
         },
         confirmed: { type: "boolean" }
@@ -1166,6 +1170,63 @@ async function handleToolCall(name, args) {
           if (gate) return gate;
           await github.renameRepo(route, owner, repoName, newName);
           return textResult(`Renamed ${full} to ${owner}/${newName}.`);
+        }
+        case "orgs_list": {
+          const orgs = await github.listUserOrgs(route);
+          if (!orgs || orgs.length === 0) return textResult("No organizations are visible to the current identity.");
+          return textResult(["Organizations:", ...orgs.map((org) => `- ${collab.renderOrgLine(org)}`)].join("\n"));
+        }
+        case "org_membership": {
+          const org = String(p.org || "").trim();
+          const username = String(p.username || "").trim();
+          if (!org || !username) throw new Error("params.org and params.username are required");
+          const membership = await github.getOrgMembership(route, org, username);
+          if (!membership) {
+            return textResult(`No active or pending organization membership was found for ${username} in ${org}.`);
+          }
+          return textResult(`Organization membership in ${org}:\n- ${collab.renderOrgMembershipLine(membership)}`);
+        }
+        case "org_create": {
+          const login = String(p.login || "").trim();
+          if (!login) throw new Error("params.login is required");
+          let defaultPermission;
+          if (p.defaultPermission !== undefined && p.defaultPermission !== null && p.defaultPermission !== "") {
+            if (typeof p.defaultPermission !== "string") {
+              throw new Error("params.defaultPermission must be one of none, read, write, or admin");
+            }
+            const normalized = collab.normalizePermissionAlias(p.defaultPermission);
+            if (!normalized) {
+              throw new Error(`Unsupported defaultPermission "${p.defaultPermission}". Use none, read, write, or admin.`);
+            }
+            defaultPermission = normalized;
+          } else {
+            defaultPermission = "read";
+          }
+          const gate = mustConfirm(`create organization ${login}`);
+          if (gate) return gate;
+          const created = await github.createUserOrg(route, {
+            login,
+            ...(typeof p.name === "string" && p.name.trim() ? { name: p.name.trim() } : {}),
+            defaultRepositoryPermission: defaultPermission
+          });
+          return textResult(`Created organization ${collab.renderOrgLine(created || { login })}.`);
+        }
+        case "org_repo_create": {
+          const org = String(p.org || "").trim();
+          const name = String(p.name || "").trim();
+          if (!org || !name) throw new Error("params.org and params.name are required");
+          const gate = mustConfirm(`create repo ${org}/${name}`);
+          if (gate) return gate;
+          const repo = await github.createOrgRepo(route, org, {
+            name,
+            ...(typeof p.description === "string" && p.description.trim() ? { description: p.description.trim() } : {}),
+            ...(typeof p.private === "boolean" ? { private: p.private } : {}),
+            ...(typeof p.autoInit === "boolean" ? { autoInit: p.autoInit } : {}),
+            ...(typeof p.hasIssues === "boolean" ? { hasIssues: p.hasIssues } : {}),
+            ...(typeof p.hasWiki === "boolean" ? { hasWiki: p.hasWiki } : {})
+          });
+          const fullName = collab.repoSummaryFullName(repo) || `${org}/${name}`;
+          return textResult(`Created org repo ${fullName}.`);
         }
         default:
           throw new Error(`Unknown collaboration_admin_invoke action: ${action}`);
