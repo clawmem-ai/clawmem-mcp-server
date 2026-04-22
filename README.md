@@ -71,6 +71,19 @@ node mcp/server.js                   # run the MCP server directly (stdio)
 CLAWMEM_BASE_URL=http://127.0.0.1:4003/api/v3 node mcp/server.js
 ```
 
+## Releasing
+
+Publishing to npm is automated. Pushing a `v*.*.*` tag triggers [`.github/workflows/publish.yml`](.github/workflows/publish.yml), which runs the test suite and then `npm publish --provenance --access public` using the `NPM_TOKEN` repo secret (an npm Automation token, so 2FA is bypassed in CI).
+
+To cut a release:
+
+```sh
+npm version 0.1.3 -m "chore: release v0.1.3"   # bumps package.json, commits, tags v0.1.3
+git push --follow-tags                          # pushes the commit AND the tag
+```
+
+The workflow refuses to publish if the tag version doesn't match `package.json`. Run logs: https://github.com/clawmem-ai/clawmem-mcp-server/actions
+
 ## License
 
 MIT
