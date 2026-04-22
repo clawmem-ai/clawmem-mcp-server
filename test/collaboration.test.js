@@ -40,6 +40,28 @@ test("repoSummaryFullName prefers full_name, falls back to owner/name", () => {
   assert.equal(collab.repoSummaryFullName(undefined), undefined);
 });
 
+test("renderOrgInvitationLine uses invitee.login when top-level login is missing", () => {
+  assert.equal(
+    collab.renderOrgInvitationLine({ id: 30031, organization: { login: "codex" }, invitee: { login: "zequan" }, role: "direct_member" }),
+    "#30031 codex → zequan (direct_member)"
+  );
+  // Top-level login still wins when both are present (backward-compat).
+  assert.equal(
+    collab.renderOrgInvitationLine({ id: 5, login: "alice", invitee: { login: "bob" }, role: "admin" }),
+    "#5 alice (admin)"
+  );
+  // Falls back to invitee.name if no login anywhere.
+  assert.equal(
+    collab.renderOrgInvitationLine({ id: 7, organization: { login: "acme" }, invitee: { name: "Carol" } }),
+    "#7 acme → Carol (member)"
+  );
+  // Still shows (unknown) when invitee has neither login nor name.
+  assert.equal(
+    collab.renderOrgInvitationLine({ id: 9, organization: { login: "acme" }, invitee: {} }),
+    "#9 acme → (unknown) (member)"
+  );
+});
+
 test("renderOrgLine composes login, name, permission, and description", () => {
   assert.equal(
     collab.renderOrgLine({ login: "acme", name: "Acme Inc", default_repository_permission: "pull", description: "widgets" }),

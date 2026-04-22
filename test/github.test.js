@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   conversationBody,
+  createOrgInvitation,
   extractLabelNames,
   isManagedLabel,
   issueDetail,
@@ -36,6 +37,34 @@ test("extractLabelNames handles string and object entries", () => {
     "status:active"
   ]);
   assert.deepEqual(extractLabelNames(undefined), []);
+});
+
+test("createOrgInvitation translates friendly roles to backend values", async () => {
+  const captured = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    captured.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 1 }), { status: 201, headers: { "Content-Type": "application/json" } });
+  };
+  try {
+    const route = { baseUrl: "https://api.example/api/v3", token: "t" };
+    await createOrgInvitation(route, "acme", { inviteeLogin: "zequan", role: "member" });
+    await createOrgInvitation(route, "acme", { inviteeLogin: "carol", role: "owner" });
+    await createOrgInvitation(route, "acme", { inviteeLogin: "dan" }); // default
+    await createOrgInvitation(route, "acme", { inviteeLogin: "eve", role: "direct_member" }); // pass-through
+    await createOrgInvitation(route, "acme", { inviteeLogin: "frank", role: "billing_manager" }); // pass-through
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(captured[0].body.role, "direct_member");
+  assert.equal(captured[1].body.role, "admin");
+  assert.equal(captured[2].body.role, "direct_member");
+  assert.equal(captured[3].body.role, "direct_member");
+  assert.equal(captured[4].body.role, "billing_manager");
+  // All hit the invitations endpoint
+  for (const c of captured) {
+    assert.match(c.url, /\/orgs\/acme\/invitations$/);
+  }
 });
 
 test("conversationBody + parseConversationBody round-trip", () => {
