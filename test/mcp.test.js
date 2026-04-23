@@ -104,9 +104,58 @@ test("mcp server lists tools", async () => {
       "memory_repo_create",
       "memory_repo_set_default",
       "memory_repos",
+      "memory_review",
       "memory_store",
       "memory_update"
     ]);
+  } finally {
+    child.kill("SIGTERM");
+  }
+});
+
+test("mcp memory_review returns checklist text without needing a backend", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "clawmem-mcp-review-"));
+  const child = spawn("node", ["mcp/server.js"], {
+    cwd: path.resolve(__dirname, ".."),
+    env: {
+      ...process.env,
+      CLAUDE_PLUGIN_DATA: tempDir
+    },
+    stdio: ["pipe", "pipe", "inherit"]
+  });
+
+  try {
+    const client = createClient(child);
+    await client.call("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1.0.0" } });
+
+    const bothResp = await client.call("tools/call", { name: "memory_review", arguments: {} });
+    const bothText = bothResp.result.content[0].text;
+    assert.match(bothText, /Memory review/);
+    assert.match(bothText, /Skill review/);
+
+    const memoryResp = await client.call("tools/call", { name: "memory_review", arguments: { focus: "memory" } });
+    const memoryText = memoryResp.result.content[0].text;
+    assert.match(memoryText, /Memory review/);
+    assert.doesNotMatch(memoryText, /Skill review/);
+
+    const skillResp = await client.call("tools/call", { name: "memory_review", arguments: { focus: "skill" } });
+    const skillText = skillResp.result.content[0].text;
+    assert.match(skillText, /Skill review/);
+    assert.doesNotMatch(skillText, /Memory review/);
+
+    // Invalid focus value falls back to both tracks (handler guards even if schema validation misses).
+    const fallbackResp = await client.call("tools/call", { name: "memory_review", arguments: { focus: "other" } });
+    const fallbackText = fallbackResp.result.content[0].text;
+    assert.match(fallbackText, /Memory review/);
+    assert.match(fallbackText, /Skill review/);
+
+    const listResp = await client.call("tools/list", {});
+    const reviewTool = listResp.result.tools.find((t) => t.name === "memory_review");
+    assert.ok(reviewTool, "memory_review tool should be listed");
+    assert.equal(reviewTool.inputSchema.type, "object");
+    assert.deepEqual(Object.keys(reviewTool.inputSchema.properties), ["focus"]);
+    assert.deepEqual(reviewTool.inputSchema.properties.focus.enum, ["memory", "skill", "both"]);
+    assert.equal(reviewTool.inputSchema.additionalProperties, false);
   } finally {
     child.kill("SIGTERM");
   }
