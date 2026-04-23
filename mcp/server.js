@@ -543,6 +543,21 @@ const TOOL_DEFS = [
     }
   },
   {
+    name: "memory_review",
+    description: "Return the ClawMem self-review checklist so durable memory and kind:skill playbooks accumulate instead of drifting. Returns memory-track and skill-track questions. Use this every ~8-10 user turns, at the end of a non-trivial task, or when the prompt shows a <clawmem-review-nudge> block. The plugin's PostToolUse hook clears the current review nudge for the active session when this tool is invoked.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        focus: {
+          type: "string",
+          enum: ["memory", "skill", "both"],
+          description: "Which review track to return. Defaults to both."
+        }
+      },
+      additionalProperties: false
+    }
+  },
+  {
     name: "memory_console",
     description: "Return a URL to the ClawMem Console where the user can browse, search, and manage memories in a web interface. Use when the user asks where to view or manage memories in a browser.",
     inputSchema: {
@@ -639,7 +654,39 @@ function resolveTargetRepo(route, args) {
   return route.defaultRepo;
 }
 
+function buildReviewChecklistText(focus) {
+  const memoryBlock = [
+    "Memory review — scan the conversation since the last review and ask:",
+    "1. Did the user reveal identity, role, preferences, habits, goals, or constraints not yet stored?",
+    "2. Did the user express expectations about how you should behave, communicate, or choose tools?",
+    "3. Did the user correct an approach? What should never repeat, and what should happen instead?",
+    "4. Did the user validate a non-obvious choice? Worth saving — corrections alone make you timid.",
+    "5. Did the turn invalidate a memory you recalled or would have recalled? Candidate for memory_forget or memory_update.",
+    "6. Does any new memory belong in a project repo or shared team repo rather than defaultRepo?",
+    "For each yes, prefer memory_update on an existing canonical node, else memory_store with a deliberate kind/topics, else memory_forget.",
+    "If no new durable knowledge surfaced this segment, say so briefly and move on — running the review empty is still better than skipping it."
+  ].join("\n");
+  const skillBlock = [
+    "Skill review — ask:",
+    "1. Was a non-trivial approach used (trial and error, course changes, error recovery) that produced a good result?",
+    "2. Did a specific sequence of tool calls or decisions lead to a useful outcome that is hard to re-derive?",
+    "3. Did the user describe a procedure to follow in the future?",
+    "4. Does an existing kind:skill cover this, and did this turn confirm, refine, or contradict it?",
+    "If yes on 1-3 and no match: memory_store a new kind:skill using the YAML template in references/schema.md.",
+    "If yes on 4 (confirm/refine): memory_update that skill — bump last_validated, append evidence, tighten steps/checks.",
+    "If yes on 4 (contradicted): fix steps/checks in place, or close the node and open a replacement with superseded-by: #<old-id>.",
+    "Lesson -> Skill: two or more active kind:lesson nodes pointing at the same corrective direction = promote to one kind:skill, close the lessons."
+  ].join("\n");
+  if (focus === "memory") return memoryBlock;
+  if (focus === "skill") return skillBlock;
+  return `${memoryBlock}\n\n${skillBlock}`;
+}
+
 async function handleToolCall(name, args) {
+  if (name === "memory_review") {
+    const focus = args && (args.focus === "memory" || args.focus === "skill") ? args.focus : "both";
+    return textResult(buildReviewChecklistText(focus));
+  }
   const route = await ensureRoute();
   const repo = route.defaultRepo;
   switch (name) {
