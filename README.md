@@ -55,9 +55,10 @@ All optional.
 
 ## Tools
 
-~38 tools across three groups:
+Shared tools are grouped by capability, with one Codex-only bootstrap helper:
 
 - **Memory**: `memory_recall`, `memory_store`, `memory_update`, `memory_forget`, `memory_list`, `memory_get`, `memory_repos`, `memory_repo_create`, `memory_repo_set_default`, `memory_labels`, `memory_console`.
+- **Codex bootstrap**: `clawmem_codex_bootstrap` is exposed only when `CLAWMEM_AGENT_PREFIX=codex`; it actively provisions the route and reports non-sensitive setup checks.
 - **Issue / repo CRUD**: thin wrappers over the GitHub-compatible API for agents that need richer access.
 - **Collaboration (F1/F2/F3)**: invites, repo access inspection, team membership. All writes require `confirmed=true`.
 

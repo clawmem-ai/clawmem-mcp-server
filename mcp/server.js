@@ -1,6 +1,9 @@
 #!/usr/bin/env node
-const { appendEvent, loadState, mutateState } = require("../lib/state");
-const { resolveMemoryRecallLimit } = require("../lib/config");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { appendEvent, loadState, mutateState, statePath } = require("../lib/state");
+const { pluginDataDir, resolveAgentPrefix, resolveMemoryRecallLimit } = require("../lib/config");
 const github = require("../lib/github");
 const { buildConsoleUrl, ensureRoute, recall, summarizeMemory } = require("../lib/runtime");
 const collab = require("../lib/collaboration");
@@ -558,6 +561,15 @@ const TOOL_DEFS = [
     }
   },
   {
+    name: "clawmem_codex_bootstrap",
+    description: "Codex-only bootstrap and verification entrypoint. Actively provisions the ClawMem route if needed, then reports non-sensitive setup checks for state, default repo visibility, pending repo invitations, marketplace registration, and optional hooks. Use this instead of asking the user to restart when Codex needs to activate or verify ClawMem.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false
+    }
+  },
+  {
     name: "memory_console",
     description: "Return a URL to the ClawMem Console where the user can browse, search, and manage memories in a web interface. Use when the user asks where to view or manage memories in a browser.",
     inputSchema: {
@@ -592,6 +604,118 @@ function encodeMessage(message) {
 
 function textResult(text) {
   return { content: [{ type: "text", text }] };
+}
+
+function visibleToolDefs() {
+  if (resolveAgentPrefix() === "codex") return TOOL_DEFS;
+  return TOOL_DEFS.filter((tool) => tool.name !== "clawmem_codex_bootstrap");
+}
+
+function readJsonIfPresent(file) {
+  if (!fs.existsSync(file)) return { exists: false };
+  try {
+    return { exists: true, value: JSON.parse(fs.readFileSync(file, "utf8")) };
+  } catch (error) {
+    return { exists: true, error };
+  }
+}
+
+function codexMarketplaceCheck() {
+  const file = path.join(os.homedir(), ".agents", "plugins", "marketplace.json");
+  const result = readJsonIfPresent(file);
+  if (!result.exists) {
+    return `- marketplace: not found at ${file} (ok for MCP-only installs; Codex plugin installs need this before restart)`;
+  }
+  if (result.error) {
+    return `- marketplace: found at ${file}, but JSON could not be parsed (${String(result.error.message || result.error)})`;
+  }
+  const root = result.value && typeof result.value === "object" ? result.value : {};
+  const plugins = Array.isArray(root.plugins) ? root.plugins : [];
+  const found = plugins.some((plugin) => {
+    const name = String((plugin && plugin.name) || "").trim();
+    const source = plugin && typeof plugin.source === "object" ? plugin.source : {};
+    const sourcePath = String((source && source.path) || "").trim();
+    return name === "clawmem" || sourcePath.includes("clawmem-codex-plugin");
+  });
+  return found
+    ? `- marketplace: clawmem entry found at ${file}`
+    : `- marketplace: ${file} exists, but no clawmem entry was found`;
+}
+
+function codexHooksCheck() {
+  const file = path.join(os.homedir(), ".codex", "hooks.json");
+  const result = readJsonIfPresent(file);
+  if (!result.exists) {
+    return `- hooks: not installed at ${file} (optional; MCP tools still work, auto-recall/mirroring will not)`;
+  }
+  if (result.error) {
+    return `- hooks: found at ${file}, but JSON could not be parsed (${String(result.error.message || result.error)})`;
+  }
+  const raw = JSON.stringify(result.value);
+  const looksLikeClawmem = raw.includes("CLAWMEM_CODEX_PLUGIN_ROOT") || raw.includes("clawmem");
+  return looksLikeClawmem
+    ? `- hooks: clawmem hook references found at ${file}`
+    : `- hooks: ${file} exists, but no clawmem hook references were found`;
+}
+
+function splitFullRepo(fullName) {
+  const [owner, repo] = String(fullName || "").split("/");
+  return { owner: (owner || "").trim(), repo: (repo || "").trim() };
+}
+
+async function codexBootstrapReport() {
+  if (resolveAgentPrefix() !== "codex") {
+    return textResult("clawmem_codex_bootstrap is only available when CLAWMEM_AGENT_PREFIX=codex.");
+  }
+
+  const route = await ensureRoute();
+  const lines = [
+    "ClawMem Codex bootstrap complete.",
+    `- agent: ${route.login || "(unknown)"}`,
+    `- default repo: ${route.defaultRepo || "(missing)"}`,
+    `- bootstrap method: ${route.bootstrapMethod || "existing route state"}`,
+    `- state dir: ${pluginDataDir()}`,
+    `- state file: ${statePath()}`,
+    codexMarketplaceCheck(),
+    codexHooksCheck()
+  ];
+
+  try {
+    const repos = await github.listUserRepos(route);
+    const repoNames = repos.map((repo) => repo.full_name || (repo.owner && repo.owner.login ? `${repo.owner.login}/${repo.name}` : repo.name || ""));
+    const visible = repoNames.includes(route.defaultRepo);
+    lines.push(`- accessible repos: ${repos.length}${visible ? "; default repo is visible" : "; default repo was not in the repo list"}`);
+  } catch (error) {
+    lines.push(`- accessible repos: check failed (${String(error.message || error)})`);
+  }
+
+  try {
+    const { owner, repo } = splitFullRepo(route.defaultRepo);
+    if (owner && repo) {
+      const found = await github.getRepo(route, owner, repo);
+      lines.push(found ? "- default repo probe: ok" : "- default repo probe: not found or not visible");
+    }
+  } catch (error) {
+    lines.push(`- default repo probe: check failed (${String(error.message || error)})`);
+  }
+
+  try {
+    const invitations = await github.listUserRepoInvitations(route);
+    lines.push(`- pending repo invitations: ${invitations.length}`);
+  } catch (error) {
+    lines.push(`- pending repo invitations: check failed (${String(error.message || error)})`);
+  }
+
+  appendEvent({
+    source: "mcp",
+    type: "codex_bootstrap_complete",
+    login: route.login,
+    repo: route.defaultRepo
+  });
+
+  lines.push("");
+  lines.push("Restart only reloads Codex plugin configuration; this tool is the activation/provisioning trigger.");
+  return textResult(lines.join("\n"));
 }
 
 function formatMemory(memory) {
@@ -686,6 +810,9 @@ async function handleToolCall(name, args) {
   if (name === "memory_review") {
     const focus = args && (args.focus === "memory" || args.focus === "skill") ? args.focus : "both";
     return textResult(buildReviewChecklistText(focus));
+  }
+  if (name === "clawmem_codex_bootstrap") {
+    return codexBootstrapReport();
   }
   const route = await ensureRoute();
   const repo = route.defaultRepo;
@@ -1438,7 +1565,7 @@ async function dispatch(message) {
       return encodeMessage({
         jsonrpc: "2.0",
         id: message.id,
-        result: { tools: TOOL_DEFS }
+        result: { tools: visibleToolDefs() }
       });
     }
     if (message.method === "tools/call") {
