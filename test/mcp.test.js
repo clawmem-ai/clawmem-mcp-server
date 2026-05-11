@@ -113,6 +113,29 @@ test("mcp server lists tools", async () => {
   }
 });
 
+test("mcp server lists Codex bootstrap tool only for Codex", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "clawmem-mcp-codex-list-"));
+  const child = spawn("node", ["mcp/server.js"], {
+    cwd: path.resolve(__dirname, ".."),
+    env: {
+      ...process.env,
+      CLAUDE_PLUGIN_DATA: tempDir,
+      CLAWMEM_AGENT_PREFIX: "codex"
+    },
+    stdio: ["pipe", "pipe", "inherit"]
+  });
+
+  try {
+    const client = createClient(child);
+    await client.call("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1.0.0" } });
+    const list = await client.call("tools/list", {});
+    const names = list.result.tools.map((tool) => tool.name);
+    assert.ok(names.includes("clawmem_codex_bootstrap"));
+  } finally {
+    child.kill("SIGTERM");
+  }
+});
+
 test("mcp memory_review returns checklist text without needing a backend", async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "clawmem-mcp-review-"));
   const child = spawn("node", ["mcp/server.js"], {
@@ -158,6 +181,74 @@ test("mcp memory_review returns checklist text without needing a backend", async
     assert.equal(reviewTool.inputSchema.additionalProperties, false);
   } finally {
     child.kill("SIGTERM");
+  }
+});
+
+test("mcp clawmem_codex_bootstrap provisions and reports setup checks", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "clawmem-mcp-codex-bootstrap-"));
+  fs.mkdirSync(path.join(tempDir, ".agents", "plugins"), { recursive: true });
+  fs.writeFileSync(
+    path.join(tempDir, ".agents", "plugins", "marketplace.json"),
+    JSON.stringify({ plugins: [{ name: "clawmem", source: { path: "./clawmem-codex-plugin" } }] })
+  );
+
+  const server = http.createServer((req, res) => {
+    if (req.url === "/api/v3/agents" && req.method === "POST") {
+      res.writeHead(201, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        login: "codex-test-abc123",
+        token: "secret",
+        repo_full_name: "codex-test-abc123/memory"
+      }));
+      return;
+    }
+    if (req.url === "/api/v3/user/repos") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify([{ full_name: "codex-test-abc123/memory", name: "memory", private: true }]));
+      return;
+    }
+    if (req.url === "/api/v3/repos/codex-test-abc123/memory") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ full_name: "codex-test-abc123/memory", name: "memory" }));
+      return;
+    }
+    if (req.url === "/api/v3/user/repository_invitations") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end("[]");
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end("{}");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+
+  const child = spawn("node", ["mcp/server.js"], {
+    cwd: path.resolve(__dirname, ".."),
+    env: {
+      ...process.env,
+      CLAUDE_PLUGIN_DATA: path.join(tempDir, "state"),
+      CLAWMEM_AGENT_PREFIX: "codex",
+      CLAWMEM_BASE_URL: `http://127.0.0.1:${port}/api/v3`,
+      HOME: tempDir
+    },
+    stdio: ["pipe", "pipe", "inherit"]
+  });
+
+  try {
+    const client = createClient(child);
+    await client.call("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1.0.0" } });
+    const result = await client.call("tools/call", { name: "clawmem_codex_bootstrap", arguments: {} });
+    const text = result.result.content[0].text;
+    assert.match(text, /ClawMem Codex bootstrap complete/);
+    assert.match(text, /agent: codex-test-abc123/);
+    assert.match(text, /default repo: codex-test-abc123\/memory/);
+    assert.match(text, /marketplace: clawmem entry found/);
+    assert.match(text, /default repo probe: ok/);
+    assert.match(text, /pending repo invitations: 0/);
+  } finally {
+    child.kill("SIGTERM");
+    await new Promise((resolve) => server.close(resolve));
   }
 });
 
