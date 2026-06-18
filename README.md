@@ -77,12 +77,12 @@ CLAWMEM_BASE_URL=http://127.0.0.1:4003/api/v3 node mcp/server.js
 
 ## Releasing
 
-Publishing to npm is automated. Pushing a `v*.*.*` tag triggers [`.github/workflows/publish.yml`](.github/workflows/publish.yml), which runs the test suite and then `npm publish --provenance --access public` using the `NPM_TOKEN` repo secret (an npm Automation token, so 2FA is bypassed in CI).
+Publishing to npm is automated. Pushing a `v*.*.*` tag triggers [`.github/workflows/publish.yml`](.github/workflows/publish.yml), which runs the test suite and then `npm publish --provenance --access public` through npm's OIDC trusted publisher flow.
 
 To cut a release:
 
 ```sh
-npm version 0.1.3 -m "chore: release v0.1.3"   # bumps package.json, commits, tags v0.1.3
+npm version 0.1.7 -m "chore: release v0.1.7"   # bumps package.json, commits, tags v0.1.7
 git push --follow-tags                          # pushes the commit AND the tag
 ```
 
