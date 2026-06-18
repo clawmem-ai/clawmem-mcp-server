@@ -101,6 +101,7 @@ test("mcp server lists tools", async () => {
       "memory_labels",
       "memory_list",
       "memory_recall",
+      "memory_recall_context",
       "memory_repo_create",
       "memory_repo_set_default",
       "memory_repos",
@@ -300,6 +301,99 @@ test("mcp memory_list call works against a mock backend", async () => {
       }
     });
     assert.match(result.result.content[0].text, /No memories found in tester\/memory/);
+  } finally {
+    child.kill("SIGTERM");
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("mcp memory_recall_context call includes wiki context against a mock backend", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "clawmem-mcp-context-call-"));
+  const memoryIssue = {
+    number: 99,
+    title: "Codex plugin wiki recall",
+    state: "open",
+    labels: ["type:memory", "kind:skill"],
+    body: [
+      "## Memory",
+      "",
+      "Codex plugin recall should include wiki context maps.",
+      "",
+      "## Relations",
+      "",
+      "- Source: #1"
+    ].join("\n")
+  };
+
+  const server = http.createServer((req, res) => {
+    if (req.url.startsWith("/api/v3/search/issues")) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ items: [memoryIssue] }));
+      return;
+    }
+    if (req.url.startsWith("/api/v3/repos/tester/memory/wiki/search")) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results: [{ slug: "codex-plugin-context", title: "Codex Plugin Context" }] }));
+      return;
+    }
+    if (req.url === "/api/v3/repos/tester/memory/wiki/pages/codex-plugin-context") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        slug: "codex-plugin-context",
+        title: "Codex Plugin Context",
+        body: "Codex plugin skill recall is anchored by #99."
+      }));
+      return;
+    }
+    if (req.url === "/api/v3/repos/tester/memory/issues/99") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(memoryIssue));
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end("{}");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  fs.writeFileSync(
+    path.join(tempDir, "state.json"),
+    JSON.stringify({
+      version: 1,
+      route: {
+        baseUrl: `http://127.0.0.1:${port}/api/v3`,
+        authScheme: "token",
+        login: "tester",
+        token: "secret",
+        defaultRepo: "tester/memory"
+      },
+      sessions: {}
+    })
+  );
+
+  const child = spawn("node", ["mcp/server.js"], {
+    cwd: path.resolve(__dirname, ".."),
+    env: {
+      ...process.env,
+      CLAUDE_PLUGIN_DATA: tempDir
+    },
+    stdio: ["pipe", "pipe", "inherit"]
+  });
+
+  try {
+    const client = createClient(child);
+    await client.call("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1.0.0" } });
+    const result = await client.call("tools/call", {
+      name: "memory_recall_context",
+      arguments: {
+        query: "codex plugin skill",
+        limit: 1
+      }
+    });
+    const text = result.result.content[0].text;
+    assert.match(text, /<clawmem-context repo="tester\/memory">/);
+    assert.match(text, /<clawmem-wiki-contexts>/);
+    assert.match(text, /Codex plugin recall should include wiki context maps/);
+    assert.match(text, /Wiki anchors: codex-plugin-context/);
   } finally {
     child.kill("SIGTERM");
     await new Promise((resolve) => server.close(resolve));

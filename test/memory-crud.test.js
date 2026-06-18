@@ -70,6 +70,47 @@ test("storeMemory deduplicates on sha256 and merges topics", async () => {
   }
 });
 
+test("storeMemory writes markdown memory schema with hidden metadata", async () => {
+  const calls = [];
+  const server = await startMockServer((req, body) => {
+    calls.push({ method: req.method, url: req.url, body });
+    if (req.method === "GET" && req.url.startsWith("/api/v3/search/issues")) {
+      return { status: 200, body: JSON.stringify({ items: [] }) };
+    }
+    if (req.method === "POST" && req.url === "/api/v3/repos/tester/memory/labels") {
+      return { status: 201, body: "{}" };
+    }
+    if (req.method === "POST" && req.url === "/api/v3/repos/tester/memory/issues") {
+      return { status: 201, body: JSON.stringify({ number: 44, title: "Claude recall", body: JSON.parse(body).body, labels: ["type:memory"] }) };
+    }
+    return { status: 404, body: "{}" };
+  });
+  try {
+    const { port } = server.address();
+    const route = { baseUrl: `http://127.0.0.1:${port}/api/v3`, authScheme: "token", token: "t" };
+    const result = await github.storeMemory(route, "tester/memory", {
+      title: "Claude recall",
+      detail: "Claude Code recall should use wiki context maps.",
+      kind: "skill",
+      topics: ["claude code"],
+      validFrom: "2026-06-18"
+    });
+    assert.equal(result.created, true);
+    const createCall = calls.find((c) => c.method === "POST" && c.url === "/api/v3/repos/tester/memory/issues");
+    assert.ok(createCall, "expected issue create");
+    const payload = JSON.parse(createCall.body);
+    assert.match(payload.body, /^## Memory\n\nClaude Code recall should use wiki context maps\./);
+    assert.match(payload.body, /## Relations/);
+    assert.match(payload.body, /schema_version: clawmem\/v2/);
+    assert.match(payload.body, /valid_from: 2026-06-18/);
+    assert.match(payload.body, /memory_hash: [a-f0-9]{64}/);
+    assert.match(payload.body, /kind: skill/);
+    assert.match(payload.body, /topics: claude-code/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("updateMemory rejects hash collision with another active memory", async () => {
   const crypto = require("node:crypto");
   const nextDetail = "shared secret";

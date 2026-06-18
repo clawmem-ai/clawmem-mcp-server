@@ -3,15 +3,45 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { appendEvent, loadState, mutateState, statePath } = require("../lib/state");
-const { pluginDataDir, resolveAgentPrefix, resolveMemoryRecallLimit } = require("../lib/config");
+const {
+  pluginDataDir,
+  resolveAgentPrefix,
+  resolveMemoryAutoRecallPlannerVariantLimit,
+  resolveMemoryAutoRecallStrategy,
+  resolveMemoryRecallLimit
+} = require("../lib/config");
 const github = require("../lib/github");
-const { buildConsoleUrl, ensureRoute, recall, summarizeMemory } = require("../lib/runtime");
+const { buildConsoleUrl, ensureRoute, formatRecallContext, recall, recallWithContext, summarizeMemory } = require("../lib/runtime");
 const collab = require("../lib/collaboration");
 
 const TOOL_DEFS = [
   {
     name: "memory_recall",
     description: "Search active ClawMem memories in the current default repo.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", minLength: 1 },
+        limit: { type: "integer", minimum: 1, maximum: 20 },
+        strategy: {
+          type: "string",
+          enum: ["single", "literal-repair", "query-planner"],
+          description: "Recall strategy for direct memory search. Defaults to configured query-planner."
+        },
+        plannerVariantLimit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 6,
+          description: "Maximum query-planner variants to run when strategy is query-planner."
+        }
+      },
+      required: ["query"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "memory_recall_context",
+    description: "Search active ClawMem memories and related wiki context maps in the current default repo. Issue memories remain ground truth; wiki pages are background and ranking hints.",
     inputSchema: {
       type: "object",
       properties: {
@@ -821,6 +851,16 @@ async function handleToolCall(name, args) {
       const items = await recall(route, repo, String(args.query || "").trim(), Number(args.limit || resolveMemoryRecallLimit()));
       if (items.length === 0) return textResult(`No active memories matched in ${repo}.`);
       return textResult(items.map(formatMemory).join("\n\n"));
+    }
+    case "memory_recall_context": {
+      const bundle = await recallWithContext(route, repo, String(args.query || "").trim(), Number(args.limit || resolveMemoryRecallLimit()), {
+        recallStrategy: args.strategy || resolveMemoryAutoRecallStrategy(),
+        plannerVariantLimit: args.plannerVariantLimit || resolveMemoryAutoRecallPlannerVariantLimit()
+      });
+      if (bundle.memories.length === 0 && bundle.wikiContexts.length === 0) {
+        return textResult(`No active memories or wiki context maps matched in ${repo}.`);
+      }
+      return textResult(formatRecallContext(bundle, repo));
     }
     case "memory_list": {
       const statusAlias = args.status === "active"

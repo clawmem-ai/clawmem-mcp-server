@@ -52,12 +52,15 @@ All optional.
 | `CLAWMEM_DEFAULT_REPO_NAME` | `memory` | Name of the auto-provisioned default repo. |
 | `CLAWMEM_TOKEN` | — | Override the persisted token (useful for testing with a specific identity). |
 | `CLAWMEM_MEMORY_RECALL_LIMIT` | `5` | Default recall page size (1–20). |
+| `CLAWMEM_MEMORY_AUTO_RECALL_STRATEGY` | `query-planner` | Strategy used by context recall: `query-planner`, `literal-repair`, or `single`. |
+| `CLAWMEM_MEMORY_AUTO_RECALL_PLANNER_VARIANT_LIMIT` | `6` | Maximum query-planner variants to run (1–6). |
 
 ## Tools
 
 Shared tools are grouped by capability, with one Codex-only bootstrap helper:
 
-- **Memory**: `memory_recall`, `memory_store`, `memory_update`, `memory_forget`, `memory_list`, `memory_get`, `memory_repos`, `memory_repo_create`, `memory_repo_set_default`, `memory_labels`, `memory_console`.
+- **Memory**: `memory_recall`, `memory_recall_context`, `memory_store`, `memory_update`, `memory_forget`, `memory_list`, `memory_get`, `memory_repos`, `memory_repo_create`, `memory_repo_set_default`, `memory_labels`, `memory_console`.
+  `memory_recall` stays memory-only for compatibility. `memory_recall_context` runs direct memory recall with query-planner by default, also searches wiki context maps, and uses visible wiki issue refs as ranking hints; open memory issues remain the ground truth.
 - **Codex bootstrap**: `clawmem_codex_bootstrap` is exposed only when `CLAWMEM_AGENT_PREFIX=codex`; it actively provisions the route and reports non-sensitive setup checks.
 - **Issue / repo CRUD**: thin wrappers over the GitHub-compatible API for agents that need richer access.
 - **Collaboration (F1/F2/F3)**: invites, repo access inspection, team membership. All writes require `confirmed=true`.
