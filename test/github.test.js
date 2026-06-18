@@ -7,12 +7,50 @@ const {
   extractLabelNames,
   isManagedLabel,
   issueDetail,
+  issueMemoryMeta,
   parseConversationBody
 } = require("../lib/github");
 
 test("issueDetail reads YAML block detail", () => {
   const body = "type: memory\ndetail: |-\n  prefers jq in shell e2e\n  and curl for simple API checks\n";
   assert.equal(issueDetail({ body }), "prefers jq in shell e2e\nand curl for simple API checks");
+});
+
+test("issueDetail reads markdown Memory section", () => {
+  const body = [
+    "## Memory",
+    "",
+    "Codex uses wiki context maps for plugin recall.",
+    "",
+    "## Relations",
+    "",
+    "- Source: #12"
+  ].join("\n");
+  assert.equal(issueDetail({ body }), "Codex uses wiki context maps for plugin recall.");
+});
+
+test("issueDetail reads markdown Memory section with hidden metadata", () => {
+  const body = [
+    "## Memory",
+    "",
+    "Claude Code uses wiki context maps for plugin recall.",
+    "",
+    "## Relations",
+    "",
+    "- Source: #12",
+    "",
+    "<!-- clawmem",
+    "schema_version: clawmem/v2",
+    "valid_from: 2026-06-18",
+    "memory_hash: abc123",
+    "-->"
+  ].join("\n");
+  assert.equal(issueDetail({ body }), "Claude Code uses wiki context maps for plugin recall.");
+  assert.deepEqual(issueMemoryMeta({ body }), {
+    schema_version: "clawmem/v2",
+    valid_from: "2026-06-18",
+    memory_hash: "abc123"
+  });
 });
 
 test("isManagedLabel recognizes managed prefixes and exacts", () => {

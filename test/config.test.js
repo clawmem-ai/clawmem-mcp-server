@@ -1,7 +1,14 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { deriveConsoleBaseUrl, normalizeApiBaseUrl, resolveBaseUrl, resolveConsoleBaseUrl } = require("../lib/config");
+const {
+  deriveConsoleBaseUrl,
+  normalizeApiBaseUrl,
+  resolveBaseUrl,
+  resolveConsoleBaseUrl,
+  resolveMemoryAutoRecallPlannerVariantLimit,
+  resolveMemoryAutoRecallStrategy
+} = require("../lib/config");
 
 test("normalizeApiBaseUrl defaults to the hosted ClawMem API", () => {
   assert.equal(normalizeApiBaseUrl(""), "https://git.clawmem.ai/api/v3");
@@ -55,5 +62,37 @@ test("resolveBaseUrl accepts CLAWMEM_GIT_BASE_URL and normalizes it", () => {
     } else {
       process.env.CLAWMEM_GIT_BASE_URL = previous;
     }
+  }
+});
+
+test("resolveMemoryAutoRecallStrategy defaults to query-planner and accepts overrides", () => {
+  const previousStrategy = process.env.CLAWMEM_MEMORY_AUTO_RECALL_STRATEGY;
+  const previousOption = process.env.CLAUDE_PLUGIN_OPTION_memoryAutoRecallStrategy;
+  try {
+    delete process.env.CLAWMEM_MEMORY_AUTO_RECALL_STRATEGY;
+    delete process.env.CLAUDE_PLUGIN_OPTION_memoryAutoRecallStrategy;
+    assert.equal(resolveMemoryAutoRecallStrategy(), "query-planner");
+    process.env.CLAWMEM_MEMORY_AUTO_RECALL_STRATEGY = "literal-repair";
+    assert.equal(resolveMemoryAutoRecallStrategy(), "literal-repair");
+    process.env.CLAWMEM_MEMORY_AUTO_RECALL_STRATEGY = "bogus";
+    assert.equal(resolveMemoryAutoRecallStrategy(), "query-planner");
+  } finally {
+    if (previousStrategy === undefined) delete process.env.CLAWMEM_MEMORY_AUTO_RECALL_STRATEGY;
+    else process.env.CLAWMEM_MEMORY_AUTO_RECALL_STRATEGY = previousStrategy;
+    if (previousOption === undefined) delete process.env.CLAUDE_PLUGIN_OPTION_memoryAutoRecallStrategy;
+    else process.env.CLAUDE_PLUGIN_OPTION_memoryAutoRecallStrategy = previousOption;
+  }
+});
+
+test("resolveMemoryAutoRecallPlannerVariantLimit clamps overrides", () => {
+  const previous = process.env.CLAWMEM_MEMORY_AUTO_RECALL_PLANNER_VARIANT_LIMIT;
+  try {
+    process.env.CLAWMEM_MEMORY_AUTO_RECALL_PLANNER_VARIANT_LIMIT = "99";
+    assert.equal(resolveMemoryAutoRecallPlannerVariantLimit(), 6);
+    process.env.CLAWMEM_MEMORY_AUTO_RECALL_PLANNER_VARIANT_LIMIT = "0";
+    assert.equal(resolveMemoryAutoRecallPlannerVariantLimit(), 1);
+  } finally {
+    if (previous === undefined) delete process.env.CLAWMEM_MEMORY_AUTO_RECALL_PLANNER_VARIANT_LIMIT;
+    else process.env.CLAWMEM_MEMORY_AUTO_RECALL_PLANNER_VARIANT_LIMIT = previous;
   }
 });
