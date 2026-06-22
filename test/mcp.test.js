@@ -187,10 +187,33 @@ test("mcp memory_review returns checklist text without needing a backend", async
 
 test("mcp clawmem_codex_bootstrap provisions and reports setup checks", async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "clawmem-mcp-codex-bootstrap-"));
-  fs.mkdirSync(path.join(tempDir, ".agents", "plugins"), { recursive: true });
+  fs.mkdirSync(path.join(tempDir, ".codex", ".tmp", "marketplaces", "clawmem-ai"), { recursive: true });
   fs.writeFileSync(
-    path.join(tempDir, ".agents", "plugins", "marketplace.json"),
-    JSON.stringify({ plugins: [{ name: "clawmem", source: { path: "./clawmem-codex-plugin" } }] })
+    path.join(tempDir, ".codex", "config.toml"),
+    [
+      "[marketplaces.clawmem-ai]",
+      'source_type = "git"',
+      'last_revision = "0f5bd9fbc2887c2c9811441833b252fd8a369d21"',
+      "",
+      '[plugins."clawmem@clawmem-ai"]',
+      "enabled = true",
+      ""
+    ].join("\n")
+  );
+  fs.writeFileSync(
+    path.join(tempDir, ".codex", ".tmp", "marketplaces", "clawmem-ai", ".codex-marketplace-install.json"),
+    JSON.stringify({ revision: "0f5bd9fbc2887c2c9811441833b252fd8a369d21" })
+  );
+  const pluginRoot = path.join(tempDir, ".codex", "plugins", "cache", "clawmem-ai", "clawmem", "0.1.0");
+  fs.mkdirSync(path.join(pluginRoot, ".codex-plugin"), { recursive: true });
+  fs.mkdirSync(path.join(pluginRoot, "hooks"), { recursive: true });
+  fs.writeFileSync(
+    path.join(pluginRoot, ".codex-plugin", "plugin.json"),
+    JSON.stringify({ hooks: "./hooks/hooks.json" })
+  );
+  fs.writeFileSync(
+    path.join(pluginRoot, "hooks", "hooks.json"),
+    JSON.stringify({ hooks: {} })
   );
 
   const server = http.createServer((req, res) => {
@@ -244,7 +267,9 @@ test("mcp clawmem_codex_bootstrap provisions and reports setup checks", async ()
     assert.match(text, /ClawMem Codex bootstrap complete/);
     assert.match(text, /agent: codex-test-abc123/);
     assert.match(text, /default repo: codex-test-abc123\/memory/);
-    assert.match(text, /marketplace: clawmem entry found/);
+    assert.match(text, /marketplace: clawmem@clawmem-ai enabled/);
+    assert.match(text, /revision 0f5bd9fbc288/);
+    assert.match(text, /hooks: plugin-bundled hooks declared/);
     assert.match(text, /default repo probe: ok/);
     assert.match(text, /pending repo invitations: 0/);
   } finally {

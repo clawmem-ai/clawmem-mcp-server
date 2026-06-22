@@ -650,11 +650,82 @@ function readJsonIfPresent(file) {
   }
 }
 
+function readTextIfPresent(file) {
+  if (!fs.existsSync(file)) return { exists: false };
+  try {
+    return { exists: true, value: fs.readFileSync(file, "utf8") };
+  } catch (error) {
+    return { exists: true, error };
+  }
+}
+
+function shortSha(value) {
+  const raw = String(value || "").trim();
+  return raw.length > 12 ? raw.slice(0, 12) : raw;
+}
+
+function codexConfigHasEnabledClawmem(text) {
+  const marketplaceFound = /^\[marketplaces\.clawmem-ai\]\s*$/m.test(text);
+  const pluginHeader = /^\[plugins\."clawmem@clawmem-ai"\]\s*$/m.exec(text);
+  if (!marketplaceFound || !pluginHeader) return false;
+  const rest = text.slice(pluginHeader.index + pluginHeader[0].length);
+  const nextHeader = rest.search(/^\[/m);
+  const section = nextHeader === -1 ? rest : rest.slice(0, nextHeader);
+  return /^\s*enabled\s*=\s*true\s*$/m.test(section);
+}
+
+function codexMarketplaceRevision(home) {
+  const installFile = path.join(home, ".codex", ".tmp", "marketplaces", "clawmem-ai", ".codex-marketplace-install.json");
+  const install = readJsonIfPresent(installFile);
+  if (!install.exists || install.error || !install.value || typeof install.value !== "object") return "";
+  return shortSha(install.value.revision);
+}
+
+function clawmemPluginRoots(home) {
+  const roots = [];
+  roots.push(path.join(home, ".codex", ".tmp", "marketplaces", "clawmem-ai", "plugins", "clawmem"));
+  const cacheRoot = path.join(home, ".codex", "plugins", "cache", "clawmem-ai", "clawmem");
+  try {
+    const versions = fs.readdirSync(cacheRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(cacheRoot, entry.name))
+      .sort()
+      .reverse();
+    roots.push(...versions);
+  } catch {}
+  return roots.filter((root, index, all) => root && all.indexOf(root) === index);
+}
+
+function pluginBundledHooksPath(pluginRoot) {
+  const manifestFile = path.join(pluginRoot, ".codex-plugin", "plugin.json");
+  const manifest = readJsonIfPresent(manifestFile);
+  if (!manifest.exists || manifest.error || !manifest.value || typeof manifest.value !== "object") return "";
+  const hooks = typeof manifest.value.hooks === "string" ? manifest.value.hooks : "";
+  if (!hooks) return "";
+  const hooksFile = path.resolve(pluginRoot, hooks);
+  return fs.existsSync(hooksFile) ? hooksFile : "";
+}
+
 function codexMarketplaceCheck() {
+  const home = os.homedir();
+  const configFile = path.join(home, ".codex", "config.toml");
+  const config = readTextIfPresent(configFile);
+  if (config.exists && !config.error && codexConfigHasEnabledClawmem(config.value || "")) {
+    const revision = codexMarketplaceRevision(home);
+    return revision
+      ? `- marketplace: clawmem@clawmem-ai enabled in ${configFile} (revision ${revision})`
+      : `- marketplace: clawmem@clawmem-ai enabled in ${configFile}`;
+  }
+
+  const pluginRoot = clawmemPluginRoots(home).find((root) => fs.existsSync(path.join(root, ".codex-plugin", "plugin.json")));
+  if (pluginRoot) {
+    return `- marketplace: clawmem plugin files found at ${pluginRoot}`;
+  }
+
   const file = path.join(os.homedir(), ".agents", "plugins", "marketplace.json");
   const result = readJsonIfPresent(file);
   if (!result.exists) {
-    return `- marketplace: not found at ${file} (ok for MCP-only installs; Codex plugin installs need this before restart)`;
+    return `- marketplace: no Codex clawmem plugin registration found (checked ${configFile} and legacy ${file}; ok for MCP-only installs)`;
   }
   if (result.error) {
     return `- marketplace: found at ${file}, but JSON could not be parsed (${String(result.error.message || result.error)})`;
@@ -673,19 +744,26 @@ function codexMarketplaceCheck() {
 }
 
 function codexHooksCheck() {
-  const file = path.join(os.homedir(), ".codex", "hooks.json");
+  const home = os.homedir();
+  const file = path.join(home, ".codex", "hooks.json");
   const result = readJsonIfPresent(file);
-  if (!result.exists) {
-    return `- hooks: not installed at ${file} (optional; MCP tools still work, auto-recall/mirroring will not)`;
+  if (result.exists) {
+    if (result.error) {
+      return `- hooks: found at ${file}, but JSON could not be parsed (${String(result.error.message || result.error)})`;
+    }
+    const raw = JSON.stringify(result.value);
+    const looksLikeClawmem = raw.includes("CLAWMEM_CODEX_PLUGIN_ROOT") || raw.includes("clawmem");
+    return looksLikeClawmem
+      ? `- hooks: clawmem hook references found at ${file}`
+      : `- hooks: ${file} exists, but no clawmem hook references were found`;
   }
-  if (result.error) {
-    return `- hooks: found at ${file}, but JSON could not be parsed (${String(result.error.message || result.error)})`;
+
+  const bundledHooks = clawmemPluginRoots(home).map(pluginBundledHooksPath).find(Boolean);
+  if (bundledHooks) {
+    return `- hooks: plugin-bundled hooks declared at ${bundledHooks} (load/trust status is per Codex thread)`;
   }
-  const raw = JSON.stringify(result.value);
-  const looksLikeClawmem = raw.includes("CLAWMEM_CODEX_PLUGIN_ROOT") || raw.includes("clawmem");
-  return looksLikeClawmem
-    ? `- hooks: clawmem hook references found at ${file}`
-    : `- hooks: ${file} exists, but no clawmem hook references were found`;
+
+  return `- hooks: no manual ${file} or plugin-bundled clawmem hooks found (optional; MCP tools still work)`;
 }
 
 function splitFullRepo(fullName) {
