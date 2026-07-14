@@ -107,8 +107,53 @@ test("mcp server lists tools", async () => {
       "memory_repos",
       "memory_review",
       "memory_store",
-      "memory_update"
+      "memory_update",
+      "memory_wiki_get",
+      "memory_wiki_upsert"
     ]);
+  } finally {
+    child.kill("SIGTERM");
+  }
+});
+
+test("plugin skill profile exposes only the memory and wiki execution surface", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "clawmem-mcp-skill-profile-"));
+  const child = spawn("node", ["mcp/server.js"], {
+    cwd: path.resolve(__dirname, ".."),
+    env: {
+      ...process.env,
+      CLAUDE_PLUGIN_DATA: tempDir,
+      CLAWMEM_AGENT_PREFIX: "codex",
+      CLAWMEM_TOOL_PROFILE: "skill"
+    },
+    stdio: ["pipe", "pipe", "inherit"]
+  });
+
+  try {
+    const client = createClient(child);
+    await client.call("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1.0.0" } });
+    const list = await client.call("tools/list", {});
+    assert.deepEqual(list.result.tools.map((tool) => tool.name).sort(), [
+      "clawmem_codex_bootstrap",
+      "memory_console",
+      "memory_forget",
+      "memory_get",
+      "memory_labels",
+      "memory_list",
+      "memory_recall",
+      "memory_recall_context",
+      "memory_repo_set_default",
+      "memory_repos",
+      "memory_review",
+      "memory_store",
+      "memory_update",
+      "memory_wiki_get",
+      "memory_wiki_upsert"
+    ]);
+    const review = await client.call("tools/call", { name: "memory_review", arguments: { focus: "memory" } });
+    assert.match(review.result.content[0].text, /Memory review/);
+    const blocked = await client.call("tools/call", { name: "issue_list", arguments: {} });
+    assert.match(blocked.error.message, /not available in the skill profile/);
   } finally {
     child.kill("SIGTERM");
   }
@@ -209,7 +254,7 @@ test("mcp clawmem_codex_bootstrap provisions and reports setup checks", async ()
   fs.mkdirSync(path.join(pluginRoot, "hooks"), { recursive: true });
   fs.writeFileSync(
     path.join(pluginRoot, ".codex-plugin", "plugin.json"),
-    JSON.stringify({ hooks: "./hooks/hooks.json" })
+    JSON.stringify({ name: "clawmem", version: "0.1.1" })
   );
   fs.writeFileSync(
     path.join(pluginRoot, "hooks", "hooks.json"),
@@ -217,7 +262,7 @@ test("mcp clawmem_codex_bootstrap provisions and reports setup checks", async ()
   );
 
   const server = http.createServer((req, res) => {
-    if (req.url === "/api/v3/agents" && req.method === "POST") {
+    if (req.url === "/api/ext/v1/agents" && req.method === "POST") {
       res.writeHead(201, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         login: "codex-test-abc123",
@@ -356,12 +401,12 @@ test("mcp memory_recall_context call includes wiki context against a mock backen
       res.end(JSON.stringify({ items: [memoryIssue] }));
       return;
     }
-    if (req.url.startsWith("/api/v3/repos/tester/memory/wiki/search")) {
+    if (req.url.startsWith("/api/ext/v1/repos/tester/memory/wiki/search")) {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ results: [{ slug: "codex-plugin-context", title: "Codex Plugin Context" }] }));
       return;
     }
-    if (req.url === "/api/v3/repos/tester/memory/wiki/pages/codex-plugin-context") {
+    if (req.url === "/api/ext/v1/repos/tester/memory/wiki/pages/codex-plugin-context") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         slug: "codex-plugin-context",
@@ -419,6 +464,86 @@ test("mcp memory_recall_context call includes wiki context against a mock backen
     assert.match(text, /<clawmem-wiki-contexts>/);
     assert.match(text, /Codex plugin recall should include wiki context maps/);
     assert.match(text, /Wiki anchors: codex-plugin-context/);
+  } finally {
+    child.kill("SIGTERM");
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("mcp memory_wiki_upsert requires confirmation and writes through the extension API", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "clawmem-mcp-wiki-write-"));
+  const calls = [];
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => { body += String(chunk); });
+    req.on("end", () => {
+      calls.push({ path: req.url, method: req.method, body: body ? JSON.parse(body) : null });
+      if (req.url === "/api/ext/v1/repos/tester/memory/wiki/pages/projects%2Fpilot" && req.method === "PUT") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ slug: "projects/pilot", sha: "new-sha" }));
+        return;
+      }
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end("{}");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  fs.writeFileSync(
+    path.join(tempDir, "state.json"),
+    JSON.stringify({
+      version: 1,
+      route: {
+        baseUrl: `http://127.0.0.1:${port}/api/v3`,
+        authScheme: "token",
+        login: "tester",
+        token: "secret",
+        defaultRepo: "tester/memory"
+      },
+      sessions: {}
+    })
+  );
+  const child = spawn("node", ["mcp/server.js"], {
+    cwd: path.resolve(__dirname, ".."),
+    env: {
+      ...process.env,
+      CLAUDE_PLUGIN_DATA: tempDir,
+      CLAWMEM_AGENT_PREFIX: "claude",
+      CLAWMEM_TOOL_PROFILE: "skill"
+    },
+    stdio: ["pipe", "pipe", "inherit"]
+  });
+
+  try {
+    const client = createClient(child);
+    await client.call("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1.0.0" } });
+    const rejected = await client.call("tools/call", {
+      name: "memory_wiki_upsert",
+      arguments: { slug: "projects/pilot", body: "# Pilot\n\n- Source: #9" }
+    });
+    assert.match(rejected.result.content[0].text, /Refusing to write wiki context/);
+    assert.equal(calls.length, 0);
+
+    const result = await client.call("tools/call", {
+      name: "memory_wiki_upsert",
+      arguments: {
+        slug: "projects/pilot",
+        body: "# Pilot\n\n- Source: #9",
+        message: "Update pilot context",
+        sha: "old-sha",
+        confirmed: true
+      }
+    });
+    assert.match(result.result.content[0].text, /Updated wiki context tester\/memory\/projects\/pilot \(sha new-sha\)/);
+    assert.deepEqual(calls, [{
+      path: "/api/ext/v1/repos/tester/memory/wiki/pages/projects%2Fpilot",
+      method: "PUT",
+      body: {
+        body: "# Pilot\n\n- Source: #9",
+        message: "Update pilot context",
+        sha: "old-sha"
+      }
+    }]);
   } finally {
     child.kill("SIGTERM");
     await new Promise((resolve) => server.close(resolve));

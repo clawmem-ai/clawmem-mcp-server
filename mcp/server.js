@@ -13,6 +13,7 @@ const {
 const github = require("../lib/github");
 const { buildConsoleUrl, ensureRoute, formatRecallContext, recall, recallWithContext, summarizeMemory } = require("../lib/runtime");
 const collab = require("../lib/collaboration");
+const { version: PACKAGE_VERSION } = require("../package.json");
 
 const TOOL_DEFS = [
   {
@@ -174,6 +175,34 @@ const TOOL_DEFS = [
         repo: { type: "string", pattern: "^[^/\\s]+/[^/\\s]+$", description: "Full repo name, e.g. owner/memory." }
       },
       required: ["repo"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "memory_wiki_get",
+    description: "Fetch a ClawMem wiki context page by slug from the current default repo. Wiki pages are navigation maps; issue memories remain the source of truth.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string", minLength: 1, description: "Wiki slug; nested paths such as projects/example are supported." }
+      },
+      required: ["slug"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "memory_wiki_upsert",
+    description: "Create or update a Wiki context page through the ClawMem extension API. First create or update the cited issue memory; then write a compact map with visible #issue references. This write requires confirmed=true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string", minLength: 1, description: "Wiki slug; nested paths such as projects/example are supported." },
+        body: { type: "string", minLength: 1, maxLength: 50000, description: "Full Markdown body. Include visible issue references such as #123." },
+        message: { type: "string", maxLength: 500, description: "Optional change message." },
+        sha: { type: "string", description: "Optional current page SHA for optimistic concurrency." },
+        confirmed: { type: "boolean", description: "Must be true to write the Wiki page." }
+      },
+      required: ["slug", "body"],
       additionalProperties: false
     }
   },
@@ -636,9 +665,36 @@ function textResult(text) {
   return { content: [{ type: "text", text }] };
 }
 
+const SKILL_TOOL_NAMES = new Set([
+  "memory_recall",
+  "memory_recall_context",
+  "memory_list",
+  "memory_get",
+  "memory_store",
+  "memory_update",
+  "memory_forget",
+  "memory_labels",
+  "memory_repos",
+  "memory_repo_set_default",
+  "memory_wiki_get",
+  "memory_wiki_upsert",
+  "memory_review",
+  "memory_console",
+  "clawmem_codex_bootstrap"
+]);
+
+function resolveToolProfile() {
+  const configured = String(process.env.CLAWMEM_TOOL_PROFILE || "").trim().toLowerCase();
+  if (configured === "full" || configured === "skill") return configured;
+  return "full";
+}
+
 function visibleToolDefs() {
-  if (resolveAgentPrefix() === "codex") return TOOL_DEFS;
-  return TOOL_DEFS.filter((tool) => tool.name !== "clawmem_codex_bootstrap");
+  const profile = resolveToolProfile();
+  return TOOL_DEFS.filter((tool) => {
+    if (tool.name === "clawmem_codex_bootstrap" && resolveAgentPrefix() !== "codex") return false;
+    return profile === "full" || SKILL_TOOL_NAMES.has(tool.name);
+  });
 }
 
 function readJsonIfPresent(file) {
@@ -697,12 +753,7 @@ function clawmemPluginRoots(home) {
 }
 
 function pluginBundledHooksPath(pluginRoot) {
-  const manifestFile = path.join(pluginRoot, ".codex-plugin", "plugin.json");
-  const manifest = readJsonIfPresent(manifestFile);
-  if (!manifest.exists || manifest.error || !manifest.value || typeof manifest.value !== "object") return "";
-  const hooks = typeof manifest.value.hooks === "string" ? manifest.value.hooks : "";
-  if (!hooks) return "";
-  const hooksFile = path.resolve(pluginRoot, hooks);
+  const hooksFile = path.join(pluginRoot, "hooks", "hooks.json");
   return fs.existsSync(hooksFile) ? hooksFile : "";
 }
 
@@ -914,6 +965,17 @@ function buildReviewChecklistText(focus) {
   return `${memoryBlock}\n\n${skillBlock}`;
 }
 
+function normalizeWikiSlug(value) {
+  const slug = String(value || "").trim();
+  if (!slug || slug.length > 200 || slug.startsWith("/") || slug.endsWith("/") || /[\u0000-\u001F]/.test(slug)) {
+    throw new Error("wiki slug must be a non-empty path of at most 200 characters");
+  }
+  if (slug.split("/").some((part) => part === "." || part === "..")) {
+    throw new Error("wiki slug cannot contain . or .. path segments");
+  }
+  return slug;
+}
+
 async function handleToolCall(name, args) {
   if (name === "memory_review") {
     const focus = args && (args.focus === "memory" || args.focus === "skill") ? args.focus : "both";
@@ -1053,6 +1115,26 @@ async function handleToolCall(name, args) {
         return state;
       });
       return textResult(`Default repo set to ${repoArg} for this plugin install. Previous default was ${repo}.`);
+    }
+    case "memory_wiki_get": {
+      const slug = normalizeWikiSlug(args.slug);
+      const page = await github.getWikiPage(route, repo, slug);
+      const header = `Wiki context ${page.title ? `“${page.title}”` : slug} (${page.slug || slug})`;
+      const sha = page.sha ? `\nsha=${page.sha}` : "";
+      return textResult(`${header}${sha}\n\n${String(page.body || "").trim()}`.trim());
+    }
+    case "memory_wiki_upsert": {
+      const confirmation = requireMutationConfirmation(args, `write wiki context ${String(args.slug || "").trim() || "page"}`);
+      if (confirmation) return confirmation;
+      const slug = normalizeWikiSlug(args.slug);
+      const body = String(args.body || "");
+      if (!body.trim()) throw new Error("wiki body is required");
+      const page = await github.upsertWikiPage(route, repo, slug, {
+        body,
+        message: typeof args.message === "string" ? args.message.trim() : `Update wiki context: ${slug}`,
+        sha: typeof args.sha === "string" ? args.sha.trim() : ""
+      });
+      return textResult(`Updated wiki context ${repo}/${page.slug || slug}${page.sha ? ` (sha ${page.sha})` : ""}.`);
     }
     case "issue_create": {
       const targetRepo = resolveTargetRepo(route, args);
@@ -1671,7 +1753,7 @@ async function dispatch(message) {
           capabilities: { tools: {} },
           serverInfo: {
             name: "clawmem",
-            version: "0.1.0"
+            version: PACKAGE_VERSION
           }
         }
       });
@@ -1688,6 +1770,9 @@ async function dispatch(message) {
     }
     if (message.method === "tools/call") {
       const params = message.params || {};
+      if (!visibleToolDefs().some((tool) => tool.name === params.name)) {
+        throw new Error(`Tool ${String(params.name || "")} is not available in the ${resolveToolProfile()} profile. Set CLAWMEM_TOOL_PROFILE=full only for explicit raw MCP administration.`);
+      }
       const result = await handleToolCall(params.name, params.arguments || {});
       appendEvent({
         source: "mcp",
