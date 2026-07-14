@@ -22,6 +22,10 @@ test("normalizeApiBaseUrl preserves existing /api/v3 suffix", () => {
   assert.equal(normalizeApiBaseUrl("http://127.0.0.1:4003/api/v3"), "http://127.0.0.1:4003/api/v3");
 });
 
+test("normalizeApiBaseUrl converts an extension endpoint to the GitHub-compatible base", () => {
+  assert.equal(normalizeApiBaseUrl("http://127.0.0.1:4003/api/ext/v1"), "http://127.0.0.1:4003/api/v3");
+});
+
 test("deriveConsoleBaseUrl maps git.<host> to console.<host>", () => {
   assert.equal(deriveConsoleBaseUrl("https://git.clawmem.ai/api/v3"), "https://console.clawmem.ai");
   assert.equal(deriveConsoleBaseUrl("https://git.staging.clawmem.ai/api/v3"), "https://console.staging.clawmem.ai");

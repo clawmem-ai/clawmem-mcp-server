@@ -4,7 +4,7 @@
 
 Stdio MCP server that powers the ClawMem durable-memory tools. Used by both the ClawMem [Claude Code](https://github.com/clawmem-ai/clawmem-claude-code-plugin) and [Codex](https://github.com/clawmem-ai/clawmem-codex-plugin) plugins, and runnable directly from any MCP-capable client.
 
-ClawMem treats a GitHub-compatible backend (default `git.clawmem.ai`) as a memory store: `type:memory` issues are durable memories, `type:conversation` issues are session transcripts. The server auto-bootstraps an agent identity and a default repo on first tool call — no signup or API key required.
+ClawMem treats a GitHub-compatible backend (default `git.clawmem.ai`) as a memory store: `type:memory` issues are durable memories, `type:conversation` issues are session transcripts. The server auto-bootstraps an agent identity through the extension API (`/api/ext/v1/agents`) and stores a GitHub-compatible `/api/v3` route for issue/repo operations — no signup or API key required.
 
 ## Use with Codex
 
@@ -15,8 +15,8 @@ MCP-only install (minimal, no skill or hooks) is still supported — add this to
 ```toml
 [mcp_servers.clawmem]
 command = "npx"
-args = ["-y", "clawmem-mcp-server"]
-env = { CLAWMEM_AGENT_PREFIX = "codex", CLAWMEM_STATE_DIR = "~/.local/state/clawmem" }
+args = ["-y", "clawmem-mcp-server@^0.1.9"]
+env = { CLAWMEM_AGENT_PREFIX = "codex", CLAWMEM_STATE_DIR = "~/.local/state/clawmem", CLAWMEM_TOOL_PROFILE = "full" }
 ```
 
 Without the skill, Codex has the tools but no discipline about when to use them — you'll need to prompt it explicitly every time.
@@ -34,7 +34,7 @@ Any client that accepts stdio MCP servers can launch this one:
   "mcpServers": {
     "clawmem": {
       "command": "npx",
-      "args": ["-y", "clawmem-mcp-server"]
+      "args": ["-y", "clawmem-mcp-server@^0.1.9"]
     }
   }
 }
@@ -49,6 +49,7 @@ All optional.
 | `CLAWMEM_BASE_URL` | `https://git.clawmem.ai/api/v3` | ClawMem API base. |
 | `CLAWMEM_STATE_DIR` | `~/.local/state/clawmem` (or `.data-dev/` in-repo for local dev) | Where token + route state is persisted. `~` is expanded. |
 | `CLAWMEM_AGENT_PREFIX` | `claude` | Prefix used when deriving the auto-provisioned agent login. Set to `codex` when running inside Codex. |
+| `CLAWMEM_TOOL_PROFILE` | `full` | `skill` exposes the focused memory/Wiki surface used by the Codex and Claude Code plugins; `full` exposes explicit MCP-only administration tools. |
 | `CLAWMEM_DEFAULT_REPO_NAME` | `memory` | Name of the auto-provisioned default repo. |
 | `CLAWMEM_TOKEN` | — | Override the persisted token (useful for testing with a specific identity). |
 | `CLAWMEM_MEMORY_RECALL_LIMIT` | `5` | Default recall page size (1–20). |
@@ -57,9 +58,11 @@ All optional.
 
 ## Tools
 
-Shared tools are grouped by capability, with one Codex-only bootstrap helper:
+The server has two tool profiles:
 
-- **Memory**: `memory_recall`, `memory_recall_context`, `memory_store`, `memory_update`, `memory_forget`, `memory_list`, `memory_get`, `memory_repos`, `memory_repo_create`, `memory_repo_set_default`, `memory_labels`, `memory_console`.
+- **`skill`**: the plugin default. It exposes memory recall/write, schema/repo selection, `memory_wiki_get`, confirmation-gated `memory_wiki_upsert`, `memory_review`, `memory_console`, and the Codex-only bootstrap helper. It hides generic issue and collaboration administration.
+- **`full`**: the MCP-only default. It adds generic issue/repo and collaboration administration for an explicitly configured client.
+- **Memory**: `memory_recall`, `memory_recall_context`, `memory_store`, `memory_update`, `memory_forget`, `memory_list`, `memory_get`, `memory_repos`, `memory_repo_create`, `memory_repo_set_default`, `memory_labels`, `memory_wiki_get`, `memory_wiki_upsert`, `memory_console`.
   `memory_recall` stays memory-only for compatibility. `memory_recall_context` runs direct memory recall with query-planner by default, also searches wiki context maps, and uses visible wiki issue refs as ranking hints; open memory issues remain the ground truth.
 - **Codex bootstrap**: `clawmem_codex_bootstrap` is exposed only when `CLAWMEM_AGENT_PREFIX=codex`; it actively provisions the route and reports non-sensitive setup checks.
 - **Issue / repo CRUD**: thin wrappers over the GitHub-compatible API for agents that need richer access.
