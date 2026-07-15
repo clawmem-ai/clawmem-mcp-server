@@ -1,8 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 const github = require("../lib/github");
-const { formatRecallContext, recallWithContext } = require("../lib/runtime");
+const { ensureRoute, formatRecallContext, recallWithContext } = require("../lib/runtime");
 
 function memoryIssue(number, title, detail, labels = []) {
   return {
@@ -34,6 +37,45 @@ async function withPatchedGithub(patches, fn) {
     for (const [key, value] of Object.entries(original)) github[key] = value;
   }
 }
+
+test("ensureRoute registers the configured agent prefix without a project-directory suffix", async () => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "clawmem-runtime-prefix-"));
+  const previous = {
+    CLAWMEM_AGENT_PREFIX: process.env.CLAWMEM_AGENT_PREFIX,
+    CLAWMEM_STATE_DIR: process.env.CLAWMEM_STATE_DIR,
+    CLAWMEM_BASE_URL: process.env.CLAWMEM_BASE_URL,
+    CLAWMEM_DEFAULT_REPO_NAME: process.env.CLAWMEM_DEFAULT_REPO_NAME
+  };
+  process.env.CLAWMEM_AGENT_PREFIX = "codex";
+  process.env.CLAWMEM_STATE_DIR = stateDir;
+  process.env.CLAWMEM_BASE_URL = "https://git.example.test";
+  process.env.CLAWMEM_DEFAULT_REPO_NAME = "memory";
+  let registration = null;
+
+  try {
+    await withPatchedGithub({
+      registerAgent: async (input) => {
+        registration = input;
+        return {
+          login: "codex-123abc",
+          token: "token",
+          defaultRepo: "codex-123abc/memory",
+          baseUrl: "https://git.example.test/api/v3"
+        };
+      }
+    }, async () => {
+      await ensureRoute();
+    });
+    assert.equal(registration.prefixLogin, "codex");
+    assert.equal(registration.defaultRepoName, "memory");
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});
 
 test("recallWithContext uses wiki issue refs as ranking hints", async () => {
   const fetchedIssues = [];
